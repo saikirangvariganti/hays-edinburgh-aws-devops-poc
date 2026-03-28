@@ -1,0 +1,315 @@
+pipeline {
+    agent {
+        kubernetes {
+            yaml """
+apiVersion: v1
+kind: Pod
+metadata:
+  labels:
+    app: jenkins-agent
+spec:
+  containers:
+  - name: docker
+    image: docker:24-dind
+    securityContext:
+      privileged: true
+    volumeMounts:
+    - name: docker-storage
+      mountPath: /var/lib/docker
+  - name: kubectl
+    image: bitnami/kubectl:1.28
+    command: ['cat']
+    tty: true
+  - name: helm
+    image: alpine/helm:3.13.0
+    command: ['cat']
+    tty: true
+  - name: trivy
+    image: aquasec/trivy:latest
+    command: ['cat']
+    tty: true
+  - name: terraform
+    image: hashicorp/terraform:1.6
+    command: ['cat']
+    tty: true
+  volumes:
+  - name: docker-storage
+    emptyDir: {}
+"""
+        }
+    }
+
+    environment {
+        AWS_REGION          = 'eu-west-2'
+        ECR_REGISTRY        = "${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
+        ECR_REPOSITORY      = 'hays-devops-app'
+        IMAGE_TAG           = "${env.BUILD_NUMBER}-${env.GIT_COMMIT.take(7)}"
+        EKS_CLUSTER_NAME    = 'hays-devops-eks'
+        HELM_RELEASE_NAME   = 'hays-app'
+        K8S_NAMESPACE       = 'production'
+        SONAR_PROJECT_KEY   = 'hays-edinburgh-aws-devops-poc'
+    }
+
+    options {
+        buildDiscarder(logRotator(numToKeepStr: '20'))
+        timeout(time: 60, unit: 'MINUTES')
+        timestamps()
+        ansiColor('xterm')
+    }
+
+    parameters {
+        choice(name: 'DEPLOY_ENV', choices: ['staging', 'production'], description: 'Target deployment environment')
+        booleanParam(name: 'RUN_TERRAFORM', defaultValue: false, description: 'Run Terraform apply')
+        booleanParam(name: 'SKIP_TESTS', defaultValue: false, description: 'Skip test stages')
+    }
+
+    stages {
+        stage('Checkout') {
+            steps {
+                checkout scm
+                script {
+                    env.GIT_BRANCH = sh(script: 'git rev-parse --abbrev-ref HEAD', returnStdout: true).trim()
+                    env.GIT_COMMIT_MSG = sh(script: 'git log -1 --pretty=%B', returnStdout: true).trim()
+                }
+                echo "Branch: ${env.GIT_BRANCH}"
+                echo "Commit: ${env.GIT_COMMIT}"
+            }
+        }
+
+        stage('Static Analysis') {
+            when { not { expression { params.SKIP_TESTS } } }
+            parallel {
+                stage('Lint') {
+                    steps {
+                        container('docker') {
+                            sh '''
+                                pip install flake8 pylint
+                                flake8 app/ --max-line-length=120 --ignore=E501 || true
+                                pylint app/*.py --fail-under=7.0 || true
+                            '''
+                        }
+                    }
+                }
+                stage('Terraform Validate') {
+                    steps {
+                        container('terraform') {
+                            dir('terraform') {
+                                sh '''
+                                    terraform fmt -check -recursive
+                                    terraform init -backend=false
+                                    terraform validate
+                                '''
+                            }
+                        }
+                    }
+                }
+                stage('Helm Lint') {
+                    steps {
+                        container('helm') {
+                            sh 'helm lint helm/app-chart/'
+                        }
+                    }
+                }
+            }
+        }
+
+        stage('Unit Tests') {
+            when { not { expression { params.SKIP_TESTS } } }
+            steps {
+                container('docker') {
+                    sh '''
+                        pip install pytest pytest-cov pyyaml
+                        pytest tests/ -v --cov=app --cov-report=xml --cov-report=html \
+                            --junitxml=test-results.xml
+                    '''
+                }
+                publishTestResults testResultsPattern: 'test-results.xml'
+                publishCoverage(
+                    adapters: [coberturaAdapter('coverage.xml')],
+                    sourceFileResolver: sourceFiles('NEVER_STORE')
+                )
+            }
+        }
+
+        stage('Build Docker Image') {
+            steps {
+                container('docker') {
+                    script {
+                        sh """
+                            aws ecr get-login-password --region ${AWS_REGION} | \
+                                docker login --username AWS --password-stdin ${ECR_REGISTRY}
+                            docker build \
+                                --build-arg BUILD_DATE=\$(date -u +'%Y-%m-%dT%H:%M:%SZ') \
+                                --build-arg GIT_COMMIT=${env.GIT_COMMIT} \
+                                --build-arg VERSION=${IMAGE_TAG} \
+                                -t ${ECR_REGISTRY}/${ECR_REPOSITORY}:${IMAGE_TAG} \
+                                -t ${ECR_REGISTRY}/${ECR_REPOSITORY}:latest \
+                                -f app/Dockerfile .
+                        """
+                    }
+                }
+            }
+        }
+
+        stage('Security Scan') {
+            when { not { expression { params.SKIP_TESTS } } }
+            parallel {
+                stage('Trivy Container Scan') {
+                    steps {
+                        container('trivy') {
+                            sh """
+                                trivy image \
+                                    --severity HIGH,CRITICAL \
+                                    --exit-code 1 \
+                                    --format json \
+                                    --output trivy-report.json \
+                                    ${ECR_REGISTRY}/${ECR_REPOSITORY}:${IMAGE_TAG} || true
+                            """
+                            archiveArtifacts artifacts: 'trivy-report.json', fingerprint: true
+                        }
+                    }
+                }
+                stage('Trivy IaC Scan') {
+                    steps {
+                        container('trivy') {
+                            sh '''
+                                trivy config \
+                                    --severity HIGH,CRITICAL \
+                                    --exit-code 0 \
+                                    --format json \
+                                    --output trivy-iac-report.json \
+                                    terraform/
+                            '''
+                            archiveArtifacts artifacts: 'trivy-iac-report.json', fingerprint: true
+                        }
+                    }
+                }
+            }
+        }
+
+        stage('Push to ECR') {
+            steps {
+                container('docker') {
+                    sh """
+                        docker push ${ECR_REGISTRY}/${ECR_REPOSITORY}:${IMAGE_TAG}
+                        docker push ${ECR_REGISTRY}/${ECR_REPOSITORY}:latest
+                        echo "Image pushed: ${ECR_REGISTRY}/${ECR_REPOSITORY}:${IMAGE_TAG}"
+                    """
+                }
+            }
+        }
+
+        stage('Terraform Apply') {
+            when {
+                allOf {
+                    expression { params.RUN_TERRAFORM }
+                    branch 'main'
+                }
+            }
+            steps {
+                container('terraform') {
+                    withCredentials([string(credentialsId: 'db-password', variable: 'DB_PASSWORD')]) {
+                        dir('terraform') {
+                            sh """
+                                terraform init
+                                terraform plan -var="db_password=${DB_PASSWORD}" -out=tfplan
+                                terraform apply -auto-approve tfplan
+                            """
+                        }
+                    }
+                }
+            }
+        }
+
+        stage('Deploy to Staging') {
+            when { branch 'develop' }
+            steps {
+                container('helm') {
+                    withCredentials([[$class: 'AmazonWebServicesCredentialsBinding', credentialsId: 'aws-credentials']]) {
+                        sh """
+                            aws eks update-kubeconfig --region ${AWS_REGION} --name ${EKS_CLUSTER_NAME}
+                            helm upgrade --install ${HELM_RELEASE_NAME} helm/app-chart/ \
+                                --namespace staging \
+                                --create-namespace \
+                                --set image.tag=${IMAGE_TAG} \
+                                --set replicaCount=1 \
+                                --wait \
+                                --timeout 5m
+                        """
+                    }
+                }
+            }
+        }
+
+        stage('Integration Tests') {
+            when { branch 'develop' }
+            steps {
+                container('docker') {
+                    sh '''
+                        pip install pytest requests
+                        pytest tests/integration/ -v --junitxml=integration-test-results.xml || true
+                    '''
+                }
+            }
+        }
+
+        stage('Deploy to Production') {
+            when { branch 'main' }
+            input {
+                message "Deploy to production?"
+                ok "Deploy"
+                submitter "devops-lead"
+            }
+            steps {
+                container('helm') {
+                    withCredentials([[$class: 'AmazonWebServicesCredentialsBinding', credentialsId: 'aws-credentials']]) {
+                        sh """
+                            aws eks update-kubeconfig --region ${AWS_REGION} --name ${EKS_CLUSTER_NAME}
+                            helm upgrade --install ${HELM_RELEASE_NAME} helm/app-chart/ \
+                                --namespace ${K8S_NAMESPACE} \
+                                --create-namespace \
+                                --set image.tag=${IMAGE_TAG} \
+                                --set replicaCount=3 \
+                                --wait \
+                                --timeout 10m \
+                                --atomic
+                        """
+                    }
+                }
+            }
+        }
+
+        stage('Smoke Test') {
+            when { branch 'main' }
+            steps {
+                container('kubectl') {
+                    sh """
+                        kubectl rollout status deployment/${HELM_RELEASE_NAME}-hays-devops-app \
+                            -n ${K8S_NAMESPACE} --timeout=5m
+                        kubectl get pods -n ${K8S_NAMESPACE} -l app.kubernetes.io/name=hays-devops-app
+                    """
+                }
+            }
+        }
+    }
+
+    post {
+        always {
+            cleanWs()
+        }
+        success {
+            slackSend(
+                channel: '#devops-deployments',
+                color: 'good',
+                message: "DEPLOYED: ${env.JOB_NAME} #${env.BUILD_NUMBER} to ${params.DEPLOY_ENV} - ${env.IMAGE_TAG}"
+            )
+        }
+        failure {
+            slackSend(
+                channel: '#devops-alerts',
+                color: 'danger',
+                message: "FAILED: ${env.JOB_NAME} #${env.BUILD_NUMBER} - Check ${env.BUILD_URL}"
+            )
+        }
+    }
+}

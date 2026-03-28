@@ -1,0 +1,110 @@
+{
+  "widgets": [
+    {
+      "type": "metric",
+      "x": 0,
+      "y": 0,
+      "width": 12,
+      "height": 6,
+      "properties": {
+        "metrics": [
+          ["AWS/EKS", "cluster_failed_node_count", "ClusterName", "hays-devops-eks"],
+          ["AWS/EKS", "cluster_node_count", "ClusterName", "hays-devops-eks"]
+        ],
+        "view": "timeSeries",
+        "stacked": false,
+        "region": "eu-west-2",
+        "title": "EKS Cluster Node Count",
+        "period": 60,
+        "stat": "Average"
+      }
+    },
+    {
+      "type": "metric",
+      "x": 12,
+      "y": 0,
+      "width": 12,
+      "height": 6,
+      "properties": {
+        "metrics": [
+          ["ContainerInsights", "pod_cpu_utilization", "ClusterName", "hays-devops-eks", "Namespace", "production"],
+          ["ContainerInsights", "pod_memory_utilization", "ClusterName", "hays-devops-eks", "Namespace", "production"]
+        ],
+        "view": "timeSeries",
+        "stacked": false,
+        "region": "eu-west-2",
+        "title": "Pod CPU and Memory Utilization",
+        "period": 60,
+        "stat": "Average"
+      }
+    },
+    {
+      "type": "metric",
+      "x": 0,
+      "y": 6,
+      "width": 12,
+      "height": 6,
+      "properties": {
+        "metrics": [
+          ["AWS/RDS", "CPUUtilization", "DBInstanceIdentifier", "hays-devops-rds"],
+          ["AWS/RDS", "FreeStorageSpace", "DBInstanceIdentifier", "hays-devops-rds"],
+          ["AWS/RDS", "DatabaseConnections", "DBInstanceIdentifier", "hays-devops-rds"]
+        ],
+        "view": "timeSeries",
+        "stacked": false,
+        "region": "eu-west-2",
+        "title": "RDS Metrics",
+        "period": 60,
+        "stat": "Average"
+      }
+    },
+    {
+      "type": "metric",
+      "x": 12,
+      "y": 6,
+      "width": 12,
+      "height": 6,
+      "properties": {
+        "metrics": [
+          ["AWS/ApplicationELB", "RequestCount", "LoadBalancer", "app/hays-alb/LOAD_BALANCER_ID"],
+          ["AWS/ApplicationELB", "TargetResponseTime", "LoadBalancer", "app/hays-alb/LOAD_BALANCER_ID"],
+          ["AWS/ApplicationELB", "HTTPCode_Target_5XX_Count", "LoadBalancer", "app/hays-alb/LOAD_BALANCER_ID"]
+        ],
+        "view": "timeSeries",
+        "stacked": false,
+        "region": "eu-west-2",
+        "title": "ALB Request Metrics",
+        "period": 60,
+        "stat": "Sum"
+      }
+    },
+    {
+      "type": "alarm",
+      "x": 0,
+      "y": 12,
+      "width": 24,
+      "height": 6,
+      "properties": {
+        "title": "Active Alarms",
+        "alarms": [
+          "arn:aws:cloudwatch:eu-west-2:ACCOUNT_ID:alarm:hays-eks-high-cpu",
+          "arn:aws:cloudwatch:eu-west-2:ACCOUNT_ID:alarm:hays-rds-high-cpu",
+          "arn:aws:cloudwatch:eu-west-2:ACCOUNT_ID:alarm:hays-alb-5xx-errors"
+        ]
+      }
+    },
+    {
+      "type": "log",
+      "x": 0,
+      "y": 18,
+      "width": 24,
+      "height": 6,
+      "properties": {
+        "query": "SOURCE '/aws/eks/hays-devops-eks/cluster' | fields @timestamp, @message | filter @message like /ERROR/ | sort @timestamp desc | limit 20",
+        "region": "eu-west-2",
+        "title": "EKS Error Logs",
+        "view": "table"
+      }
+    }
+  ]
+}

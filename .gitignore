@@ -1,0 +1,112 @@
+# Terraform
+.terraform/
+.terraform.lock.hcl
+*.tfstate
+*.tfstate.*
+*.tfstate.backup
+tfplan
+*.tfvars
+!example.tfvars
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+.terraformrc
+terraform.rc
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+pip-wheel-metadata/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+*.manifest
+*.spec
+pip-log.txt
+pip-delete-this-directory.txt
+htmlcov/
+.tox/
+.nox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+*.py,cover
+.hypothesis/
+.pytest_cache/
+
+# Virtual environments
+.env
+.venv
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Docker
+.dockerignore
+docker-compose.override.yml
+
+# Kubernetes secrets (never commit real secrets)
+*-secret.yaml
+*-secrets.yaml
+kubeconfig
+*.kubeconfig
+
+# Reports and artifacts
+*.json
+!monitoring/cloudwatch_dashboard.json
+!monitoring/grafana_dashboard.json
+trivy-report.json
+trivy-iac-report.json
+coverage.xml
+junit-report.xml
+pytest-report.html
+migration_assessment_report.json
+iam_audit_report_*.json
+kms_setup_report_*.json
+test-results.xml
+
+# AWS credentials
+.aws/
+credentials
+aws_credentials
+
+# Logs
+*.log
+logs/
+
+# Helm
+charts/*.tgz
+
+# Node
+node_modules/

@@ -1,0 +1,25 @@
+apiVersion: v2
+name: hays-devops-app
+description: A Helm chart for the Hays Edinburgh AWS DevOps POC application
+type: application
+version: 1.0.0
+appVersion: "1.0.0"
+keywords:
+  - devops
+  - aws
+  - eks
+  - kubernetes
+  - hays
+home: https://github.com/saikirangvariganti/hays-edinburgh-aws-devops-poc
+sources:
+  - https://github.com/saikirangvariganti/hays-edinburgh-aws-devops-poc
+maintainers:
+  - name: Sai Kiran Goud Variganti
+    email: kiransaivarisai@gmail.com
+dependencies:
+  - name: postgresql
+    version: "12.x.x"
+    repository: https://charts.bitnami.com/bitnami
+    condition: postgresql.enabled
+annotations:
+  category: Application
